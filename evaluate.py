@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 from sklearn.preprocessing import MultiLabelBinarizer
-from common import prediction_with_threshold 
+from common import prediction_with_threshold
 from sklearn.metrics import precision_recall_fscore_support
 
 class Evaluation(object):
@@ -19,7 +19,7 @@ class Evaluation(object):
       self.get_metric(preds[:, config.layer1-2], labels[:, config.layer1-2], average='weighted', about='layer_1')
       self.get_metric(preds[:, config.layer2-2], labels[:, config.layer2-2], average='micro', about='layer_2')
       self.get_metric(preds[:, config.layer2-2], labels[:, config.layer2-2], average='weighted', about='layer_2')
-      if config.data_from=="reuters": 
+      if config.data_from=="reuters":
         self.get_metric(preds[:, config.layer3-2], labels[:, config.layer3-2], average='micro', about='layer_3')
         self.get_metric(preds[:, config.layer3-2], labels[:, config.layer3-2], average='weighted', about='layer_3')
 
@@ -40,12 +40,16 @@ class Evaluation(object):
 
 class Evaluator(object):
   def __init__(self, config, model):
-    self.config = config 
+    self.config = config
+    if config.model_name.endswith("flat"):
+      self.n_classes = config.fn_classes
+    else:
+      self.n_classes = config.hn_classes
     self.model = model
     self.loss = model.loss
     self.logits = model.logits
     self.mlb = MultiLabelBinarizer()
-    if not self.config.model_name.endswith("flat"): 
+    if not self.config.model_name.endswith("flat"):
       self.preds = model.preds
       self.scores = model.scores
       if config.data_from == "reuters":
@@ -56,7 +60,7 @@ class Evaluator(object):
       if config.data_from == "reuters":
         self.mlb.fit([[0,1,2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]])
       elif config.data_from == "20newsgroup":
-        self.mlb.fit([[0,1,2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 28, 19]])
+        self.mlb.fit([[0,1,2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]])
 
   def get_metric(self, preds, labels, average=None, about="all", data_type="dev"):
     precisions, recalls, fscores, _ = precision_recall_fscore_support(labels, preds, average=average)
@@ -67,29 +71,33 @@ class Evaluator(object):
 
   def get_evaluation(self, sess, batch):
     batch_idx, batch_ds = batch
-    
+
     feed_dict = self.model.get_feed_dict(batch, False)
-    if self.config.model_name.endswith("flat"): 
+    if self.config.model_name.endswith("flat"):
       test_size = batch_ds.get_data_size()
       logits, loss = sess.run([self.model.prob, self.loss], feed_dict=feed_dict)
       # print("logits:", logits)
-      preds = np.array([[i for i in range(self.config.n_classes)] for _ in range(test_size)])
+      preds = np.array([[i for i in range(self.n_classes)] for _ in range(test_size)])
       # print("preds:", preds.shape)
 
-      preds = prediction_with_threshold(self.config, preds, logits, threshold=self.config.multilabel_threshold)
+      preds = prediction_with_threshold(self.config, preds, logits, threshold=self.config.thred)
+      print("preds:", preds[0:2])
       preds = self.mlb.transform(preds)
-      labels = batch_ds.data["y_seqs"] 
+      if self.config.data_from == "20newsgroup": labels = batch_ds.data["y_f"]
+      else: labels = batch_ds.data["y_seqs"]
       return preds, labels
-      
+
     else:
       preds, scores = sess.run([self.preds, self.scores], feed_dict=feed_dict)
-      if self.config.check : print("check eval:", preds[0:3,:], scores[0:3,:], preds.shape, scores.shape)   # why test is not fixed?  
+      # print("check eval:", preds[0,:], scores[0,:], preds.shape, scores.shape)   # why test is not fixed?   cause keep_prob
       preds = prediction_with_threshold(self.config, preds, scores, threshold=self.config.thred)
-      if self.config.check:  print("check eval:", preds[0:3])
+      print("check eval:", preds[0:3])
       preds = self.mlb.transform(preds)
-      labels = batch_ds.data["y_seqs"] 
+      if self.config.data_from == "20newsgroup": labels = batch_ds.data["y_h"]
+      else: labels = batch_ds.data["y_seqs"]
+      print("labels:", labels[0])
       return preds, labels
-    
+
   def get_evaluation_from_batches(self, sess, batches):
     config = self.config
     elist = [self.get_evaluation(sess, batch) for batch in batches]
@@ -97,5 +105,5 @@ class Evaluator(object):
     labels = [elem[1] for elem in elist]
     preds = np.concatenate(preds, axis=0)
     labels = np.concatenate(labels, axis=0)
-    # print("preds, labels:", preds[0,:], labels[0,:], len(preds[0,:]), len(labels[0,:]))
+    print("preds, labels:", preds[0,:], labels[0,:], len(preds[0,:]), len(labels[0,:]))
     return Evaluation(config, preds, labels)

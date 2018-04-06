@@ -36,7 +36,7 @@ class DataSet(object):
     total_num_examples = self.get_data_size()
     self.valid_idxs = range(total_num_examples) if valid_idxs is None else valid_idxs
     self.num_examples = len(self.valid_idxs)
-   
+
   def _sort_key(self, idx):
     x = self.data["x"][idx]
     return len(x)
@@ -57,9 +57,9 @@ class DataSet(object):
     if num_batches is None:
       num_batches = num_batches_per_epoch
     num_epochs = int(math.ceil(num_batches / num_batches_per_epoch))
-    
+
     if shuffle:
-      random_idxs = random.sample(self.valid_idxs, (num_batches_per_epoch-1)*batch_size) # shuffle 
+      random_idxs = random.sample(self.valid_idxs, (num_batches_per_epoch-1)*batch_size) # shuffle
       if cluster:
         sorted_idxs = sorted(random_idxs, key=self._sort_key)
         sorted_grouped = lambda: list(grouper(sorted_idxs, batch_size))
@@ -72,7 +72,7 @@ class DataSet(object):
       grouped = raw_grouped
 
     batch_idx_tuples = itertools.chain.from_iterable(grouped() for _ in range(num_epochs))
-    
+
     for _ in range(num_batches):
       batch_idxs = tuple(i for i in next(batch_idx_tuples) if i is not None)
       batch_data = self.get_by_idxs(batch_idxs)
@@ -82,21 +82,31 @@ class DataSet(object):
 
 def prediction_with_threshold(config, t_preds, t_scores, threshold):
   if config.model_name.endswith("flat"):
-    new_preds = []                                                         
+    new_preds = []
     for i in range(t_preds.shape[0]):
       single = []
+      max_score, max_index = -10.0, 0
       for j in range(t_preds.shape[1]):
-        if t_scores[i, j] > threshold or j==0:
-          single += [t_preds[i,j]] 
+        if config.data_from == "20newsgroup":
+          if t_scores[i,j] > max_score:
+            max_score = t_scores[i,j]
+            max_index = j
+        else:
+          if t_scores[i, j] > threshold:
+            single += [t_preds[i,j]]
+      if config.data_from == "20newsgroup": single += [max_index]
       new_preds.append(single)
     return new_preds
-  else:
+  else:   # sorted
     t_preds[t_preds == -1] = 0  # set -1 to 0
-    new_preds = []                                                         
+    new_preds = []
     t_preds = t_preds.transpose((0, 2, 1))
     for i in range(t_preds.shape[0]):
       single = []
       for j in range(t_preds.shape[1]):
+        if config.data_from == "20newsgroup" and j==0:
+          single += t_preds[i,j].tolist()
+          break
         if t_scores[i, j] > threshold or j==0:
           single += t_preds[i, j].tolist()
       new_preds.append(single)

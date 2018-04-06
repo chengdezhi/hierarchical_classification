@@ -3,7 +3,7 @@ from tensorflow.contrib import rnn
 from tensorflow.python.layers import core as layers_core
 from tensorflow.contrib.seq2seq import BasicDecoder, sequence_loss, GreedyEmbeddingHelper, dynamic_decode, TrainingHelper, \
     ScheduledEmbeddingTrainingHelper, tile_batch, BeamSearchDecoder, BahdanauAttention, AttentionWrapper
-from common import DataSet 
+from common import DataSet
 
 def get_model(config):
   with tf.name_scope("model_{}".format(config.model_name)) as scope, tf.device("/{}:{}".format(config.device_type, config.gpu_idx)):
@@ -18,39 +18,35 @@ class Model(object):
   def __init__(self, config, scope):
     self.scope = scope
     self.config = config
-    max_seq_length = config.max_seq_length 
+    max_seq_length = config.max_seq_length
     self.global_step = tf.get_variable('global_step', shape=[], dtype='int32', initializer=tf.constant_initializer(0), trainable=False)
     self.x = tf.placeholder(tf.int32, [None, config.max_docs_length], name="x")      # [batch_size, max_doc_len]
     self.x_mask = tf.placeholder(tf.int32, [None, config.max_docs_length], name="x_mask")      # [batch_size, max_doc_len]
-    if config.model_name.endswith("flat"):
-      self.y = tf.placeholder(tf.int32, [None, config.n_classes], name="y")
-    else:
-      self.y = tf.placeholder(tf.int32, [None, config.max_seq_length], name="y")
-    print("y", self.y.get_shape())
-    self.y_mask = tf.placeholder(tf.int32, [None, max_seq_length], name="y_mask")
+    self.y_flat = tf.placeholder(tf.int32, [None, config.fn_classes], name="y_flat")
+    self.y_seq = tf.placeholder(tf.int32, [None, config.max_seq_length], name="y_seq")
     self.y_decoder = tf.placeholder(tf.int32, [None, max_seq_length], name="y-decoder")
     self.x_seq_length = tf.placeholder(tf.int32, [None], name="x_seq_length")
     self.y_seq_length = tf.placeholder(tf.int32, [None], name="y_seq_length")
     self.keep_prob = tf.placeholder(tf.float32, name="keep_prob")
-    self.output_l = layers_core.Dense(config.n_classes, use_bias=True)
+    self.output_l = layers_core.Dense(config.hn_classes, use_bias=True)
     if config.model_name == "hclf_baseline": config.decode_size = config.hidden_size
-    else: config.decode_size = 2*config.hidden_size  
-    
+    else: config.decode_size = 2*config.hidden_size
+
     if config.project:
       initializer=tf.random_normal_initializer(stddev=0.1)
       self.W_projection = tf.get_variable('W_projection', shape = [config.hidden_size*2 + config.word_embedding_size, config.decode_size], initializer = initializer)
       self.b_projection = tf.get_variable('bias', shape = [config.decode_size])
 
-    if config.concat_w2v and not config.project:  config.decode_size = 2*config.hidden_size + config.word_embedding_size 
+    if config.concat_w2v and not config.project:  config.decode_size = 2*config.hidden_size + config.word_embedding_size
 
-    self.lstm = rnn.LayerNormBasicLSTMCell(config.decode_size, dropout_keep_prob=self.keep_prob)  # lstm for decode 
-    self.encode_lstm = rnn.LayerNormBasicLSTMCell(config.hidden_size, dropout_keep_prob=self.keep_prob) # lstm for encode 
-    # TODO config.emb_mat 
+    self.lstm = rnn.LayerNormBasicLSTMCell(config.decode_size, dropout_keep_prob=self.keep_prob)  # lstm for decode
+    self.encode_lstm = rnn.LayerNormBasicLSTMCell(config.hidden_size, dropout_keep_prob=self.keep_prob) # lstm for encode
+    # TODO config.emb_mat
     # self.word_embeddings = tf.constant(config.emb_mat, dtype=tf.float32, name="word_embeddings")
     self.word_embeddings = tf.get_variable("word_embeddings", dtype='float', shape=[config.vocab_size, config.word_embedding_size], initializer=get_initializer(config.emb_mat))
-    self.label_embeddings = tf.get_variable(name="label_embeddings", shape=[config.n_classes, config.label_embedding_size], dtype=tf.float32)
-    self.xx = tf.nn.embedding_lookup(self.word_embeddings, self.x)  # [None, DL, d]    
-    self.yy = tf.nn.embedding_lookup(self.label_embeddings, self.y_decoder) # [None, seq_l, d]    
+    self.label_embeddings = tf.get_variable(name="label_embeddings", shape=[config.hn_classes, config.label_embedding_size], dtype=tf.float32)
+    self.xx = tf.nn.embedding_lookup(self.word_embeddings, self.x)  # [None, DL, d]
+    self.yy = tf.nn.embedding_lookup(self.label_embeddings, self.y_decoder) # [None, seq_l, d]
     self._build_encode(config)
     self._build_train(config)
     if not config.model_name.endswith("flat"):
@@ -59,40 +55,40 @@ class Model(object):
     #self.infer_set = set()
     self.summary = tf.summary.merge_all()
     self.summary = tf.summary.merge(tf.get_collection("summaries", scope=self.scope))
-  
+
   def _build_encode(self, config):
     if config.model_name == "hclf_baseline":
       outputs, output_states = tf.nn.dynamic_rnn(self.encode_lstm, tf.transpose(self.xx, [1,0,2]), dtype='float', sequence_length=self.x_seq_length, time_major=True)
-      outputs = tf.transpose(outputs, [1, 0, 2])  
-      self.check = outputs  
+      outputs = tf.transpose(outputs, [1, 0, 2])
+      #self.check = outputs
       self.xx_context = outputs  # tf.concat(outputs, 2)   # [None, DL, 2*hd]
       self.xx_final = output_states[1]  # lstm cell output_states: [c,h]
-      # TODO x_mask 
+      # TODO x_mask
       x_mask = tf.cast(self.x_mask, "float")
       self.first_attention = tf.reduce_mean(self.xx_context,  1)    # [None, 2*hd]
 
     if config.model_name == "hclf_bilstm":
       outputs, output_states = tf.nn.bidirectional_dynamic_rnn(self.encode_lstm, self.encode_lstm, tf.transpose(self.xx, [1, 0, 2]), dtype="float", sequence_length=self.x_seq_length, time_major=True)
-      outputs_fw = tf.transpose(outputs[0], [1, 0, 2])  
-      outputs_bw = tf.transpose(outputs[1], [1, 0, 2])  
+      outputs_fw = tf.transpose(outputs[0], [1, 0, 2])
+      outputs_bw = tf.transpose(outputs[1], [1, 0, 2])
       outputs = outputs_fw, outputs_bw
       # self.check = output_states
       self.xx_context = tf.concat(outputs, 2)   # [None, DL, 2*hd]
       self.xx_final = tf.concat([output_states[0][1], output_states[1][1]], 1)  # [None, 2*hd]
-      # TODO x_mask 
+      # TODO x_mask
       x_mask = tf.cast(self.x_mask, "float")
       self.first_attention = tf.reduce_mean(self.xx_context,  1)    # [None, 2*hd]
-      self.check = self.first_attention
-      
+      #self.check = self.first_attention
+
     if config.model_name.startswith("RCNN") or config.model_name=="fasttext_flat":
       outputs, output_states = tf.nn.bidirectional_dynamic_rnn(self.encode_lstm, self.encode_lstm, tf.transpose(self.xx, [1, 0, 2]), dtype="float", sequence_length=self.x_seq_length, time_major=True)
-      outputs_fw = tf.transpose(outputs[0], [1, 0, 2])  
-      outputs_bw = tf.transpose(outputs[1], [1, 0, 2])  
+      outputs_fw = tf.transpose(outputs[0], [1, 0, 2])
+      outputs_bw = tf.transpose(outputs[1], [1, 0, 2])
       outputs = outputs_fw, outputs_bw
-      if config.concat_w2v:  
+      if config.concat_w2v:
         self.xx_context = tf.concat([outputs[0], self.xx, outputs[1]], 2)  # [None, DL, 2*hd+d]   -- > xx_content
-         
-        if config.project:  
+
+        if config.project:
           self.xx_context = tf.nn.dropout(self.xx_context, keep_prob = self.keep_prob)
           #print("xx_context:", self.xx_context.get_shape())
           self.xx_context = tf.reshape(self.xx_context, [-1, config.hidden_size*2 + config.word_embedding_size])
@@ -101,11 +97,11 @@ class Model(object):
           #print("xx_context:", self.xx_context.get_shape())
           self.xx_context = tf.reshape(self.xx_context, [-1, config.max_docs_length, config.decode_size])   # [None, DL, decode_size]
         print("xx_context:", self.xx_context.get_shape())
-        self.xx_final = tf.reduce_max(self.xx_context, axis=1) 
+        self.xx_final = tf.reduce_max(self.xx_context, axis=1)
         # self.xx_final = tf.layers.max_pooling1d(self.xx_final, config.max_docs_length, 1)
         # self.xx_final = tf.squeeze(self.xx_final)
         # self.xx_final = tf.reshape(self.xx_final, [-1, 2*config.hidden_size+config.word_embedding_size])
-      else: 
+      else:
         self.xx_context = tf.concat(outputs, 2)   # [None, DL, 2*hd]
         #self.xx_final = tf.concat([output_states[0][1], output_states[1][1]], 1)  # [None, 2*hd]
         self.xx_final = tf.layers.max_pooling1d(self.xx_context, config.max_docs_length, 1)
@@ -121,7 +117,7 @@ class Model(object):
       #self.xx_mask = tf.reshape(self.xx_mask, [-1, config.max_docs_length, config.decode_size])
       #print("xx_mask:", self.xx_mask)
       #self.first_attention = tf.transpose(self.xx_context,[0,2,1]) * self.xx_mask
-      #self.check = self.first_attention 
+      #self.check = self.first_attention
       #print("first_attention:", self.first_attention.get_shape())
       self.first_attention = tf.reduce_sum(self.xx_context, 1)    # [None, 2*hd]
       if config.div:
@@ -133,13 +129,13 @@ class Model(object):
   def _build_train(self, config):
     # decode
     if config.model_name == "fasttext_flat":
-      self.logits = tf.contrib.layers.fully_connected(self.first_attention, config.n_classes, activation_fn=None)
+      self.logits = tf.contrib.layers.fully_connected(self.first_attention, config.fn_classes, activation_fn=None)
       print("logits:", self.logits.get_shape())
-      self.logits = tf.reshape(self.logits, [-1, config.n_classes])
+      self.logits = tf.reshape(self.logits, [-1, config.fn_classes])
     elif config.model_name == "RCNN_flat":
-      self.logits = tf.contrib.layers.fully_connected(self.xx_final, config.n_classes, activation_fn=None)
+      self.logits = tf.contrib.layers.fully_connected(self.xx_final, config.fn_classes, activation_fn=None)
       print("logits:", self.logits.get_shape())
-      self.logits = tf.reshape(self.logits, [-1, config.n_classes])
+      self.logits = tf.reshape(self.logits, [-1, config.fn_classes])
     else:
       encoder_state = rnn.LSTMStateTuple(self.xx_final, self.xx_final)
       attention_mechanism = BahdanauAttention(config.decode_size, memory=self.xx_context, memory_sequence_length=self.x_seq_length)
@@ -153,8 +149,8 @@ class Model(object):
       print("logits:", self.logits.get_shape())
 
   def _build_infer(self, config):
-    # infer_decoder/beam_search 
-    # skip for flat_baseline  
+    # infer_decoder/beam_search
+    # skip for flat_baseline
     tiled_inputs = tile_batch(self.xx_context, multiplier=config.beam_width)
     tiled_sequence_length = tile_batch(self.x_seq_length, multiplier=config.beam_width)
     tiled_first_attention = tile_batch(self.first_attention, multiplier=config.beam_width)
@@ -174,19 +170,36 @@ class Model(object):
     # cost/evaluate/train
     if config.model_name.endswith("flat"):
       self.prob = tf.nn.softmax(self.logits)
-      self.losses = tf.nn.softmax_cross_entropy_with_logits(logits=self.logits, labels = self.y) # TODO self.y at multi-labels input 
-      self.loss = tf.reduce_mean(self.losses) 
+      self.losses = tf.nn.softmax_cross_entropy_with_logits(logits=self.logits, labels = self.y_flat) # TODO self.y at multi-labels input
+      self.loss = tf.reduce_mean(self.losses)
     else:
       self.weights = tf.sequence_mask(self.y_seq_length, config.max_seq_length, dtype=tf.float32)
-      self.loss = sequence_loss(logits=self.logits, targets=self.y, weights=self.weights)
-    tf.summary.scalar(self.loss.op.name, self.loss) 
-    # TODO process compute_gradients() and apply_gradients() separetely 
+      # epsilon = tf.constant(value=0.00001)
+      self.check = self.logits
+      # self.logits = tf.clip_by_value(self.logits, -1.0, 1.0)
+      #softmax = tf.nn.softmax(logits)
+      #cross_entropy = -tf.reduce_sum(labels * tf.log(softmax), reduction_indices=[1])
+      self.losses = sequence_loss(logits=self.logits, targets=self.y_seq, weights=self.weights, average_across_timesteps=False, average_across_batch=False)
+      self.loss = tf.reduce_mean(self.losses)
+    tf.summary.scalar(self.loss.op.name, self.loss)
+    # TODO process compute_gradients() and apply_gradients() separetely
     self.train_op = tf.train.AdamOptimizer(learning_rate=config.learning_rate).minimize(self.loss, global_step=self.global_step)
     # predicted_ids: [batch_size, sequence_length, beam_width]
 
   #def _check(ds):
     # TODO fix ds["y_seq"] EOS
   #  pass
+  def get_var_list(self):
+    prefix = [""]
+    _var = tf.trainable_variables()  # tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, prefix)
+    #print(_var, type(_var))
+    return  _var
+
+  def get_global_step(self):
+    return self.global_step
+
+  def get_loss(self):
+    return self.loss
 
   def get_feed_dict(self, batch, is_train):
     batch_idx, batch_ds = batch
@@ -199,13 +212,15 @@ class Model(object):
     feed_dict[self.y_decoder] = batch_ds["decode_inps"]
     feed_dict[self.y_seq_length] = batch_ds["y_len"]
     #print("y", batch_ds["y_seqs"])
-    if self.config.model_name.endswith("flat"):   # train and test 
-      feed_dict[self.y] = batch_ds["y_seqs"]
+    if self.config.model_name.endswith("flat"):
+      if self.config.data_from == "20newsgroup":
+        feed_dict[self.y_flat] = batch_ds["y_f"]
+      else:
+        feed_dict[self.y_flat] = batch_ds["y_seqs"]
+    else:
+      feed_dict[self.y_seq] = batch_ds["y_seqs"]
+
     if is_train:
-      # print("y", batch_ds["y_seqs"])
-      # TODO check here
-      #_check(batch_ds)
-      feed_dict[self.y] = batch_ds["y_seqs"]
       feed_dict[self.keep_prob] = self.config.keep_prob
     else:
       feed_dict[self.keep_prob] = 1
