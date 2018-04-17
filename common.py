@@ -1,3 +1,4 @@
+from tqdm import tqdm
 from nltk.corpus import stopwords, reuters
 from nltk import word_tokenize
 from nltk.stem.porter import PorterStemmer
@@ -15,6 +16,35 @@ class MyEncoder(json.JSONEncoder):
       return obj.tolist()
     else:
       return super(MyEncoder, self).default(obj)
+
+def gen_word2vec(word_counter, pretrain_from = "wiki.en.vec", data_from = "ice"):
+  word2vec_dict = {}
+  if pretrain_from == "wiki.en.vec":
+    w2v_path = "/data/dechen/w2v/wiki.en.vec"
+    w2v_f = open(w2v_path, "r")
+  else:
+    w2v_path = os.path.join("/home/t-dechen/data/glove", "glove.{}.{}d.txt".format("6B", 300))
+    w2v_f = open(w2v_path, "r")
+    sizes = {'6B': int(4e5), '42B': int(1.9e6), '840B': int(2.2e6), '2B': int(1.2e6)}
+    total = sizes['6B']
+  w2v = [line for line in w2v_f]
+  total = len(w2v)
+
+  for line in tqdm(w2v, total=total):
+    array = line.lstrip().rstrip().split(" ")
+    word = array[0]
+    vector = list(map(float, array[1:]))
+    if word in word_counter:
+      word2vec_dict[word] = vector
+    elif word.capitalize() in word_counter:
+      word2vec_dict[word.capitalize()] = vector
+    elif word.lower() in word_counter:
+      word2vec_dict[word.lower()] = vector
+    elif word.upper() in word_counter:
+      word2vec_dict[word.upper()] = vector
+  shared = {"word2vec": word2vec_dict}
+  json.dump(shared, open("../data/{}/word2vec_{}.json".format(data_from, pretrain_from), "w"))
+  print("{}/{} of word vocab have corresponding vectors in {}".format(len(word2vec_dict), len(word_counter), w2v_path))
 
 def grouper(iterable, n, fillvalue=None, shorten=False, num_groups=None):
   args = [iter(iterable)] * n

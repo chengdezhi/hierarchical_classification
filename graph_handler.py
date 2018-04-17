@@ -24,6 +24,7 @@ class GraphHandler(object):
 
   def save(self, sess, global_step=None):
     saver = tf.train.Saver(max_to_keep=self.config.max_to_keep)
+    print("save model at {} global_step = {}".format(self.save_path, global_step))
     saver.save(sess, self.save_path, global_step=global_step)
 
   def _load(self, sess):

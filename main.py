@@ -47,21 +47,24 @@ def _train(config):
   train_dict, test_dict = {}, {}
   if os.path.exists("../data/{}/{}_{}{}.json".format(config.data_from, config.data_from, "train", config.clftype)):
     train_dict = json.load(open("../data/{}/{}_{}{}.json".format(config.data_from, config.data_from, "train", config.clftype), "r"))
-  if os.path.exists("../data/{}/{}_{}{}.json".format(config.data_from, config.data_from, "test", config.clftype)):
-    test_dict = json.load(open("../data/{}/{}_{}{}.json".format(config.data_from, config.data_from, "test", config.clftype), "r"))
+  if os.path.exists("../data/{}/{}_{}{}.json".format(config.data_from, config.data_from, "dev", config.clftype)):
+    dev_dict = json.load(open("../data/{}/{}_{}{}.json".format(config.data_from, config.data_from, "dev", config.clftype), "r"))
 
   # check
   for key, val in train_dict.items():
     if isinstance(val[0], list) and len(val[0])>10: print(key, val[0][:50])
     else: print(key, val[0:4])
   print("train:", len(train_dict))
-  print("test:", len(test_dict))
+  print("test:", len(dev_dict))
   if config.data_from == "reuters":
     train_data = DataSet(train_dict, "train") if len(train_dict)>0 else read_reuters(config, data_type="train", word2idx=word2idx)
     dev_data = DataSet(test_dict, "test") if len(test_dict)>0 else read_reuters(config, data_type="test", word2idx=word2idx)
   elif config.data_from == "20newsgroup":
     train_data = DataSet(train_dict, "train") if len(train_dict)>0 else read_news(config, data_type="train", word2idx=word2idx)
     dev_data = DataSet(test_dict, "test") if len(test_dict)>0 else read_news(config, data_type="test", word2idx=word2idx)
+  elif config.data_from == "ice":
+    train_data = DataSet(train_dict, "train")
+    dev_data = DataSet(dev_dict, "dev")
 
   config.train_size = train_data.get_data_size()
   config.dev_size = dev_data.get_data_size()
@@ -80,6 +83,7 @@ def _train(config):
 
   dev_evaluate = Evaluator(config, model)
 
+  best_f1 = 0.0
   for batch in tqdm(train_data.get_batches(config.batch_size, num_batches=num_batches, shuffle=True, cluster=config.cluster), total=num_batches):
     global_step = sess.run(model.global_step) + 1
     # print("global_step:", global_step)
@@ -89,8 +93,8 @@ def _train(config):
     if get_summary:
       graph_handler.add_summary(summary, global_step)
     # occasional saving
-    if global_step % config.save_period == 0:
-      graph_handler.save(sess, global_step=global_step)
+    # if global_step % config.save_period == 0 :
+    #  graph_handler.save(sess, global_step=global_step)
     if not config.eval:
       continue
     # Occasional evaluation
@@ -102,7 +106,12 @@ def _train(config):
       # print("num_steps:", num_steps)
       e_dev = dev_evaluate.get_evaluation_from_batches(
         sess, tqdm(dev_data.get_batches(config.test_batch_size, num_batches=num_steps), total=num_steps))
+      if e_dev.fv > best_f1:
+        best_f1 = e_dev.fv
+        if global_step % config.save_period == 0:
+          graph_handler.save(sess, global_step=global_step)
       graph_handler.add_summaries(e_dev.summaries, global_step)
+  print("f1:", best_f1)
 
 def _test(config):
   if config.data_from == "20newsgroup": config.test_batch_size = 281

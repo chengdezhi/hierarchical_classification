@@ -25,27 +25,22 @@ class Trainer(object):
     config = self.config
     if config.check:
       for key,value in batch_ds.data.items():
-        if isinstance(value[0], list) and len(value[0])>10: print(key, value[:][:50])
+        if isinstance(value[0], list) and len(value[0])>10: print(key, value[:][:5])
         else: print(key, value[:])
     feed_dict = model.get_feed_dict(batch, self.config)
     if config.check and False:
       w2v, l2v = sess.run([model.word_embeddings, model.label_embeddings], feed_dict=feed_dict)
       print("check: w2v", w2v.shape, w2v)
       print("check: l2v", l2v.shape, l2v)
+    if config.check :
+      logits = sess.run(model.logits, feed_dict=feed_dict)
+      print("logits:", logits[0:4], logits.shape)
     train_op = model.train_op    #  use orignal train_op , worked
     if get_summary:
       loss, summary, train_op = sess.run([model.loss, model.summary, train_op], feed_dict=feed_dict)
     else:
       loss, train_op = sess.run([model.loss, train_op], feed_dict=feed_dict)
       summary = None
-    if config.check:
-      x_seqLen, logits, y, y_len, losses = sess.run([model.x_seq_length, model.logits, model.y, model.y_seq_length, model.losses], feed_dict=feed_dict)
-      print("check_xlen:", x_seqLen, x_seqLen.shape)
-      #if config.check:
-      print("logits:", logits[0:4], logits.shape)
-      print("y:", y[0:4], y.shape)
-      print("y_len:",y_len[0], y_len.shape)
-      print("losses:", losses)
     grads = sess.run(self.grads, feed_dict = feed_dict)
     # print("clip grad:",  type(grads[0]), type(grads[1]))
     print("loss:", loss)

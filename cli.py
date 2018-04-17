@@ -5,12 +5,12 @@ from main import main as m
 
 flags = tf.app.flags
 # device
-flags.DEFINE_string("gpu_ids", "1", "Run ID [0]")
+flags.DEFINE_string("gpu_ids", "4", "Run ID [0]")
 flags.DEFINE_string("device_type", "gpu", "Run ID [0]")
 flags.DEFINE_integer("gpu_idx", 0, "")
 
 # data
-flags.DEFINE_string("data_from", "20newsgroup", "data_from")
+flags.DEFINE_string("data_from", "ice", "data_from")
 
 # training
 flags.DEFINE_float("learning_rate", 0.01, "learning_rate")
@@ -89,6 +89,7 @@ def main(_):
     config.thred = 0.053
   else:
     if config.data_from=="reuters": config.hn_classes = 21
+    if config.data_from=="ice": config.hn_classes = 648
     if config.data_from=="20newsgroup": config.hn_classes = 29
 
   if config.data_from == "reuters":
@@ -115,7 +116,19 @@ def main(_):
     config.layer1 = np.array([22,23,24,25,26,27])
     config.layer2 = np.array([3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21])
 
-  config.out_dir = os.path.join("../data", config.out_dir)
+  if config.data_from == "ice":
+    if config.mode == "train": config.val_num_batches = 3
+    config.EOS = 647
+    config.batch_size = 300
+    config.test_batch_size = 300
+    config.max_docs_length = 48
+    config.max_seq_length = 8
+    config.eval_trees = False
+    config.eval_layers = False
+    config.num_batches = 80000
+#   define tree1/tree2/layer1/layer2
+
+  config.out_dir = os.path.join("../data/out", config.out_dir)
   config.save_dir = os.path.join(config.out_dir, "save")
   config.log_dir = os.path.join(config.out_dir, "log")
   if not os.path.exists(config.out_dir):  # or os.path.isfile(config.out_dir):

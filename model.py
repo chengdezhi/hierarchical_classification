@@ -23,7 +23,7 @@ class Model(object):
     self.x = tf.placeholder(tf.int32, [None, config.max_docs_length], name="x")      # [batch_size, max_doc_len]
     self.x_mask = tf.placeholder(tf.int32, [None, config.max_docs_length], name="x_mask")      # [batch_size, max_doc_len]
     self.y_flat = tf.placeholder(tf.int32, [None, config.fn_classes], name="y_flat")
-    self.y_seq = tf.placeholder(tf.int32, [None, config.max_seq_length], name="y_seq")
+    self.y_seq = tf.placeholder(tf.int32, [None, None], name="y_seq")
     self.y_decoder = tf.placeholder(tf.int32, [None, max_seq_length], name="y-decoder")
     self.x_seq_length = tf.placeholder(tf.int32, [None], name="x_seq_length")
     self.y_seq_length = tf.placeholder(tf.int32, [None], name="y_seq_length")
@@ -146,6 +146,7 @@ class Model(object):
       train_decoder = BasicDecoder(cell, train_helper, cell_state, output_layer=self.output_l)
       self.decoder_outputs_train, decoder_state_train, decoder_seq_train = dynamic_decode(train_decoder, impute_finished=True)
       self.logits = self.decoder_outputs_train.rnn_output
+      # self.logits = tf.reshape(self.logits, [-1, config.max_seq_length, config.hn_classes])
       print("logits:", self.logits.get_shape())
 
   def _build_infer(self, config):
@@ -173,7 +174,7 @@ class Model(object):
       self.losses = tf.nn.softmax_cross_entropy_with_logits(logits=self.logits, labels = self.y_flat) # TODO self.y at multi-labels input
       self.loss = tf.reduce_mean(self.losses)
     else:
-      self.weights = tf.sequence_mask(self.y_seq_length, config.max_seq_length, dtype=tf.float32)
+      self.weights = tf.sequence_mask(self.y_seq_length, dtype=tf.float32)
       # epsilon = tf.constant(value=0.00001)
       self.check = self.logits
       # self.logits = tf.clip_by_value(self.logits, -1.0, 1.0)
@@ -201,27 +202,56 @@ class Model(object):
   def get_loss(self):
     return self.loss
 
-  def get_feed_dict(self, batch, is_train):
-    batch_idx, batch_ds = batch
-    # TODO
-    batch_ds = batch_ds.data
-    feed_dict = {}
-    feed_dict[self.x] = batch_ds["x"]
-    feed_dict[self.x_mask] = batch_ds["x_mask"]
-    feed_dict[self.x_seq_length] = batch_ds["x_len"]
-    feed_dict[self.y_decoder] = batch_ds["decode_inps"]
-    feed_dict[self.y_seq_length] = batch_ds["y_len"]
-    #print("y", batch_ds["y_seqs"])
-    if self.config.model_name.endswith("flat"):
-      if self.config.data_from == "20newsgroup":
-        feed_dict[self.y_flat] = batch_ds["y_f"]
-      else:
-        feed_dict[self.y_flat] = batch_ds["y_seqs"]
-    else:
-      feed_dict[self.y_seq] = batch_ds["y_seqs"]
+  def get_yseqs(self, seqs, ylens):
+    n_seqs = []
+    ml = 0
+    for ylen in ylens:
+      if ylen >ml: ml =ylen
+    for seq in seqs:
+      cur = []
+      for i,tc in enumerate(seq):
+        if i<ml: cur += [tc]
+      n_seqs += [cur]
+    return n_seqs
 
-    if is_train:
-      feed_dict[self.keep_prob] = self.config.keep_prob
+
+  def get_feed_dict(self, batch, is_train):
+    if self.config.data_from == "ice":
+      batch_idx, batch_ds = batch
+      batch_ds = batch_ds.data
+      feed_dict = {}
+      feed_dict[self.x] = batch_ds["x"]
+      feed_dict[self.x_mask] = batch_ds["x_mask"]
+      feed_dict[self.x_seq_length] = batch_ds["x_len"]
+      if is_train:
+        feed_dict[self.y_seq] = self.get_yseqs(batch_ds["y_seqs"], batch_ds["y_len"])    #  batch_ds["y_seqs"]
+        feed_dict[self.y_decoder] = batch_ds["decode_inps"]
+        feed_dict[self.y_seq_length] = batch_ds["y_len"]
+        feed_dict[self.keep_prob] = self.config.keep_prob
+      else:
+        feed_dict[self.keep_prob] = 1
+      return feed_dict
     else:
-      feed_dict[self.keep_prob] = 1
-    return feed_dict
+      batch_idx, batch_ds = batch
+      # TODO
+      batch_ds = batch_ds.data
+      feed_dict = {}
+      feed_dict[self.x] = batch_ds["x"]
+      feed_dict[self.x_mask] = batch_ds["x_mask"]
+      feed_dict[self.x_seq_length] = batch_ds["x_len"]
+      feed_dict[self.y_decoder] = batch_ds["decode_inps"]
+      feed_dict[self.y_seq_length] = batch_ds["y_len"]
+      #print("y", batch_ds["y_seqs"])
+      if self.config.model_name.endswith("flat"):
+        if self.config.data_from == "20newsgroup":
+          feed_dict[self.y_flat] = batch_ds["y_f"]
+        else:
+          feed_dict[self.y_flat] = batch_ds["y_seqs"]
+      else:
+        feed_dict[self.y_seq] = batch_ds["y_seqs"]
+
+      if is_train:
+        feed_dict[self.keep_prob] = self.config.keep_prob
+      else:
+        feed_dict[self.keep_prob] = 1
+      return feed_dict
