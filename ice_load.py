@@ -445,35 +445,81 @@ def load_data(data_type, debug_type=""):
   else:
     return r_docs, ys
 
+def read_flat(data_type, word2idx, debug_type):
+  print("preparing {} data".format(data_type))
+  docs, ys = load_flat(data_type, debug_type)
+  filter_docs, filter_ys = [], []
+  for doc, y in zip(docs, ys):
+    if len(doc) > 0:
+      filter_docs += [doc]
+      filter_ys += [y]
+  docs, ys = filter_docs, filter_ys
+  # to check : some id donot show up
+  mlb = MultiLabelBinarizer()
+  flat_ids = [[_ for _ in range(2, 647)]]
+  flat_ys = mlb.fit(flat_ids)
+  ys = mlb.transform(ys)
+  docs2mat, docs2mask, docs_lens = _process_docs(docs, word2idx)
+  data = {
+       "raw": docs,
+       "x": docs2mat,
+       "x_mask": docs2mask,
+       "x_len": docs_lens,
+       "y_f": ys
+      }
+  json.dump(data, open("../data/{}/{}_{}_{}{}.json".format("ice", "ice", data_type, "flat", debug_type), "w"), cls=MyEncoder)
+  return DataSet(data, data_type)
+
+def load_flat(data_type, debug_type):
+  r_docs, ys = [], []
+  id2seqs, topic2id, id2topic = get_idxs()
+  EOS = topic2id["end"]
+  with open("../data/{}/{}{}.tsv".format("ice", data_type, debug_type),"r") as f:
+    lines = [line.split("\t") for line in f]
+    labels = [line[0][9:] for line in lines]
+    docs = [line[1].strip() for line in lines]
+    docs = [doc.split(" ") for doc in docs]
+    for label, doc in zip(labels, docs):
+      y = []
+      seqs = id2seqs[label]  # [start +  label + end  + pad]
+      for seq in seqs:
+        for topic_id in seq[1:-1]:
+          if topic_id!=0 and topic_id!=EOS: y+= [topic_id]
+      ys += [y]
+      r_docs += [doc]
+  return r_docs, ys
+
 def get_data():
   debug_type = ""   #  "_debug"  # debug
   word2idx = Counter(json.load(open("../data/{}/word2idx_{}.json".format("ice", "ice"), "r"))["word2idx"])
-  read_data("train", word2idx, debug_type)
-  read_data("test", word2idx, debug_type)
-  read_data("dev", word2idx, debug_type)
+  read_flat("train", word2idx, debug_type)
+  read_flat("test", word2idx, debug_type)
+  read_flat("dev", word2idx, debug_type)
 
 def get_ft(data_type):
+  print("preparing {} for fasttext".format(data_type))
   id2seqs, topic2id, id2topic = get_idxs()
   EOS = topic2id["end"]
-  with
-
-
-  lines = [line.split("\t") for line in open("../data/{}/{}.tsv".format("ice", data_type), "r")]
-  new_lines = []
-  for line in lines:
+  # with
+  topic = open("../data/{}/{}_{}.tsv".format("ice", data_type, "topic"), "w")
+  lines = [line.strip().split("\t") for line in open("../data/{}/{}.tsv".format("ice", data_type), "r")]
+  avg = 0
+  length = len(lines)
+  for i,line in enumerate(lines):
     nls = set()
     label, text = line[0], line[1]
     for tps in id2seqs[label[9:]]:
       for tp in tps:
-        if tp!=1 or tp!=EOS: nls.add(tp)
+        #print(type(tp))
+        if tp!=1 and tp!=EOS and tp!=0: nls.add(tp)
     newl = ""
     for nl in nls: newl += "__label__" + str(nl) + "\t"
     newl += text
-    new_lines += [newl]
-  print(new_lines[0])
-  with open("../data/{}/{}_{}.tsv".format("ice", data_type, "topic"), "w") as f:
-    writer = csv.writer(f)
-    writer.writerows(new_lines)
+    if i==0: print(newl)
+    topic.write(newl+"\n")
+    avg += len(nls)
+  print("avg {} label size".format(data_type), avg/length)
+  topic.close()
 
 def write_ft():
   get_ft("train")
@@ -489,7 +535,7 @@ if __name__=="__main__":
   #sample_data()
   # split_data()
   # get_word2idx()
-  # get_data()
+  get_data()
   # get_word2vec()
   # process_hclf()
-  write_ft()
+  #write_ft()

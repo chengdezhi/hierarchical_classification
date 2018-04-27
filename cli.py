@@ -21,7 +21,7 @@ flags.DEFINE_integer("test_batch_size", 133, "")
 # TODO check epoch
 flags.DEFINE_integer("num_epochs", 200, "")
 flags.DEFINE_integer("log_period", 30, "")
-flags.DEFINE_integer("eval_period", 4, "")
+flags.DEFINE_integer("eval_period", 40, "")
 flags.DEFINE_integer("save_period", 40, "")
 flags.DEFINE_integer("val_num_batches", 0, "")
 
@@ -35,6 +35,7 @@ flags.DEFINE_integer("EOS", 20, "")
 flags.DEFINE_integer("PAD", 0, "")
 flags.DEFINE_integer("GO", 1, "")
 flags.DEFINE_boolean("project", False, "")
+flags.DEFINE_boolean("use_att", True, "")
 flags.DEFINE_boolean("concat_w2v", False, "")
 flags.DEFINE_boolean("div", False, "")
 
@@ -64,6 +65,7 @@ flags.DEFINE_integer("max_docs_length", 0, "")
 # dir
 flags.DEFINE_string("out_dir", "out", "")
 flags.DEFINE_string("clftype", "", "")
+flags.DEFINE_string("dev_type", "test", "")
 # flags.DEFINE_string("save_dir", "out/save", "")
 # flags.DEFINE_string("log_dir", "out/log", "")
 
@@ -86,6 +88,9 @@ def main(_):
     config.eval_trees = False
     if config.data_from=="reuters": config.fn_classes = 18
     if config.data_from=="20newsgroup": config.fn_classes = 20
+    if config.data_from=="ice":
+      config.fn_classes = 645
+      config.learning_rate = 0.001
     config.thred = 0.053
   else:
     if config.data_from=="reuters": config.hn_classes = 21
@@ -119,8 +124,8 @@ def main(_):
   if config.data_from == "ice":
     if config.mode == "train": config.val_num_batches = 3
     config.EOS = 647
-    config.batch_size = 300
-    config.test_batch_size = 300
+    config.batch_size = 600
+    config.test_batch_size = 600
     config.max_docs_length = 48
     config.max_seq_length = 8
     config.eval_trees = False

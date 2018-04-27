@@ -56,6 +56,13 @@ class Model(object):
     self.summary = tf.summary.merge_all()
     self.summary = tf.summary.merge(tf.get_collection("summaries", scope=self.scope))
 
+  '''
+  def basic_s2s(self, config):
+    b_xx = tf.transpose(self.yy, [1,0,2]) or tf.reshape(self.xx, [config.max_docs_length, -1, config.word_embedding_size])
+    b_yy = tf.transpose(self.yy, [1,0,2])
+    tf.contrib.legacy_seq2seq.basic_rnn_seq2seq(b_xx, b_yy, self.lstm)
+  '''
+
   def _build_encode(self, config):
     if config.model_name == "hclf_baseline":
       outputs, output_states = tf.nn.dynamic_rnn(self.encode_lstm, tf.transpose(self.xx, [1,0,2]), dtype='float', sequence_length=self.x_seq_length, time_major=True)
@@ -138,34 +145,56 @@ class Model(object):
       self.logits = tf.reshape(self.logits, [-1, config.fn_classes])
     else:
       encoder_state = rnn.LSTMStateTuple(self.xx_final, self.xx_final)
-      attention_mechanism = BahdanauAttention(config.decode_size, memory=self.xx_context, memory_sequence_length=self.x_seq_length)
-      cell = AttentionWrapper(self.lstm, attention_mechanism, output_attention=False)
-      cell_state = cell.zero_state(dtype=tf.float32, batch_size=config.batch_size)
-      cell_state = cell_state.clone(cell_state=encoder_state, attention=self.first_attention)
-      train_helper = TrainingHelper(self.yy, self.y_seq_length)
-      train_decoder = BasicDecoder(cell, train_helper, cell_state, output_layer=self.output_l)
-      self.decoder_outputs_train, decoder_state_train, decoder_seq_train = dynamic_decode(train_decoder, impute_finished=True)
-      self.logits = self.decoder_outputs_train.rnn_output
-      # self.logits = tf.reshape(self.logits, [-1, config.max_seq_length, config.hn_classes])
-      print("logits:", self.logits.get_shape())
+      if config.use_att:
+        attention_mechanism = BahdanauAttention(config.decode_size, memory=self.xx_context, memory_sequence_length=self.x_seq_length)
+        cell = AttentionWrapper(self.lstm, attention_mechanism, output_attention=False)
+        cell_state = cell.zero_state(dtype=tf.float32, batch_size=config.batch_size)
+        cell_state = cell_state.clone(cell_state=encoder_state, attention=self.first_attention)
+        train_helper = TrainingHelper(self.yy, self.y_seq_length)
+        train_decoder = BasicDecoder(cell, train_helper, cell_state, output_layer=self.output_l)
+        self.decoder_outputs_train, decoder_state_train, decoder_seq_train = dynamic_decode(train_decoder, impute_finished=True)
+        self.logits = self.decoder_outputs_train.rnn_output
+        # self.logits = tf.reshape(self.logits, [-1, config.max_seq_length, config.hn_classes])
+        print("logits:", self.logits.get_shape())
+      else:
+        cell = self.lstm
+        train_helper = TrainingHelper(self.yy, self.y_seq_length)
+        train_decoder = BasicDecoder(cell, train_helper, encoder_state, output_layer=self.output_l)
+        self.decoder_outputs_train, decoder_state_train, decoder_seq_train = dynamic_decode(train_decoder, impute_finished=True)
+        self.logits = self.decoder_outputs_train.rnn_output
+        # self.logits = tf.reshape(self.logits, [-1, config.max_seq_length, config.hn_classes])
+        print("logits:", self.logits.get_shape())
 
   def _build_infer(self, config):
     # infer_decoder/beam_search
     # skip for flat_baseline
-    tiled_inputs = tile_batch(self.xx_context, multiplier=config.beam_width)
-    tiled_sequence_length = tile_batch(self.x_seq_length, multiplier=config.beam_width)
-    tiled_first_attention = tile_batch(self.first_attention, multiplier=config.beam_width)
-    attention_mechanism = BahdanauAttention(config.decode_size, memory=tiled_inputs, memory_sequence_length=tiled_sequence_length)
-    tiled_xx_final = tile_batch(self.xx_final, config.beam_width)
-    encoder_state2 = rnn.LSTMStateTuple(tiled_xx_final, tiled_xx_final)
-    cell = AttentionWrapper(self.lstm, attention_mechanism, output_attention=False)
-    cell_state = cell.zero_state(dtype=tf.float32, batch_size = config.test_batch_size * config.beam_width)
-    cell_state = cell_state.clone(cell_state=encoder_state2, attention=tiled_first_attention)
-    infer_decoder = BeamSearchDecoder(cell, embedding=self.label_embeddings, start_tokens=[config.GO]*config.test_batch_size, end_token=config.EOS,
-                                  initial_state=cell_state, beam_width=config.beam_width, output_layer=self.output_l)
-    decoder_outputs_infer, decoder_state_infer, decoder_seq_infer = dynamic_decode(infer_decoder, maximum_iterations=config.max_seq_length)
-    self.preds = decoder_outputs_infer.predicted_ids
-    self.scores = decoder_state_infer.log_probs
+    if config.use_att:  # with att
+      tiled_inputs = tile_batch(self.xx_context, multiplier=config.beam_width)
+      tiled_sequence_length = tile_batch(self.x_seq_length, multiplier=config.beam_width)
+      tiled_first_attention = tile_batch(self.first_attention, multiplier=config.beam_width)
+      attention_mechanism = BahdanauAttention(config.decode_size, memory=tiled_inputs, memory_sequence_length=tiled_sequence_length)
+      tiled_xx_final = tile_batch(self.xx_final, config.beam_width)
+      encoder_state2 = rnn.LSTMStateTuple(tiled_xx_final, tiled_xx_final)
+      cell = AttentionWrapper(self.lstm, attention_mechanism, output_attention=False)
+      cell_state = cell.zero_state(dtype=tf.float32, batch_size = config.test_batch_size * config.beam_width)
+      cell_state = cell_state.clone(cell_state=encoder_state2, attention=tiled_first_attention)
+      infer_decoder = BeamSearchDecoder(cell, embedding=self.label_embeddings, start_tokens=[config.GO]*config.test_batch_size, end_token=config.EOS,
+                                    initial_state=cell_state, beam_width=config.beam_width, output_layer=self.output_l)
+      decoder_outputs_infer, decoder_state_infer, decoder_seq_infer = dynamic_decode(infer_decoder, maximum_iterations=config.max_seq_length)
+      self.preds = decoder_outputs_infer.predicted_ids
+      self.scores = decoder_state_infer.log_probs
+    else:   # without att
+      tiled_inputs = tile_batch(self.xx_context, multiplier=config.beam_width)
+      tiled_sequence_length = tile_batch(self.x_seq_length, multiplier=config.beam_width)
+      tiled_xx_final = tile_batch(self.xx_final, config.beam_width)
+      encoder_state = rnn.LSTMStateTuple(tiled_xx_final, tiled_xx_final)
+      #tiled_encoder_state = tile_batch(encoder_state, config.beam_width)
+      cell = self.lstm
+      infer_decoder = BeamSearchDecoder(cell, embedding=self.label_embeddings, start_tokens=[config.GO]*config.test_batch_size, end_token=config.EOS,
+                                    initial_state=encoder_state, beam_width=config.beam_width, output_layer=self.output_l)
+      decoder_outputs_infer, decoder_state_infer, decoder_seq_infer = dynamic_decode(infer_decoder, maximum_iterations=config.max_seq_length)
+      self.preds = decoder_outputs_infer.predicted_ids
+      self.scores = decoder_state_infer.log_probs
 
   def _build_loss(self, config):
     # cost/evaluate/train
@@ -214,7 +243,6 @@ class Model(object):
       n_seqs += [cur]
     return n_seqs
 
-
   def get_feed_dict(self, batch, is_train):
     if self.config.data_from == "ice":
       batch_idx, batch_ds = batch
@@ -224,11 +252,16 @@ class Model(object):
       feed_dict[self.x_mask] = batch_ds["x_mask"]
       feed_dict[self.x_seq_length] = batch_ds["x_len"]
       if is_train:
-        feed_dict[self.y_seq] = self.get_yseqs(batch_ds["y_seqs"], batch_ds["y_len"])    #  batch_ds["y_seqs"]
-        feed_dict[self.y_decoder] = batch_ds["decode_inps"]
-        feed_dict[self.y_seq_length] = batch_ds["y_len"]
+        if self.config.model_name.endswith("flat"):
+          feed_dict[self.y_flat] =  batch_ds["y_f"]
+        else:
+          feed_dict[self.y_seq] = self.get_yseqs(batch_ds["y_seqs"], batch_ds["y_len"])    #  batch_ds["y_seqs"]
+          feed_dict[self.y_decoder] = batch_ds["decode_inps"]
+          feed_dict[self.y_seq_length] = batch_ds["y_len"]
         feed_dict[self.keep_prob] = self.config.keep_prob
       else:
+        if self.config.model_name.endswith("flat"):
+          feed_dict[self.y_flat] = batch_ds["y_f"]
         feed_dict[self.keep_prob] = 1
       return feed_dict
     else:
@@ -248,7 +281,8 @@ class Model(object):
         else:
           feed_dict[self.y_flat] = batch_ds["y_seqs"]
       else:
-        feed_dict[self.y_seq] = batch_ds["y_seqs"]
+        if is_train:
+          feed_dict[self.y_seq] = self.get_yseqs(batch_ds["y_seqs"], batch_ds["y_len"])
 
       if is_train:
         feed_dict[self.keep_prob] = self.config.keep_prob

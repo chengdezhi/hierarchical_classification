@@ -13,7 +13,7 @@ class GraphHandler(object):
     self.save_path = os.path.join(config.save_dir, config.model_name)
 
   def initialize(self, sess):
-    sess.run(tf.initialize_all_variables())
+    sess.run(tf.global_variables_initializer())
     print("initialize")
     if self.config.load:
       print("load sess")

@@ -117,7 +117,7 @@ def prediction_with_threshold(config, t_preds, t_scores, threshold):
       single = []
       max_score, max_index = -10.0, 0
       for j in range(t_preds.shape[1]):
-        if config.data_from == "20newsgroup":
+        if config.data_from == "20newsgroup" or config.data_from == "ice":
           if t_scores[i,j] > max_score:
             max_score = t_scores[i,j]
             max_index = j
@@ -125,6 +125,8 @@ def prediction_with_threshold(config, t_preds, t_scores, threshold):
           if t_scores[i, j] > threshold:
             single += [t_preds[i,j]]
       if config.data_from == "20newsgroup": single += [max_index]
+      if len(single)==0:
+        single += [max_index]
       new_preds.append(single)
     return new_preds
   else:   # sorted
